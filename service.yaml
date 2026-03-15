@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: secure-fastapi-service
+
+spec:
+  type: LoadBalancer
+
+  selector:
+    app: secure-fastapi
+
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 80

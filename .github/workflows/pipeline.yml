@@ -6,7 +6,7 @@ on:
       - main
 
 jobs:
-  build-scan-push:
+  build-scan:
     runs-on: ubuntu-latest
 
     steps:
@@ -17,16 +17,12 @@ jobs:
         uses: docker/setup-buildx-action@v3.7.1
 
       - name: Build Docker image
-        run: |
-          docker build -t secure-fastapi .
+        run: docker build -t secure-fastapi .
 
-      - name: Install Trivy
-        run: |
-          sudo apt-get update
-          sudo apt-get install wget -y
-          wget https://github.com/aquasecurity/trivy/releases/latest/download/trivy_0.63.0_Linux-64bit.deb
-          sudo dpkg -i trivy_0.63.0_Linux-64bit.deb
-
-      - name: Scan image
-        run: |
-          trivy image --exit-code 1 --severity HIGH,CRITICAL secure-fastapi
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@0.20.0
+        with:
+          image-ref: 'secure-fastapi'
+          format: 'table'
+          exit-code: '1'
+          severity: 'HIGH,CRITICAL'

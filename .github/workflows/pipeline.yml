@@ -5,14 +5,23 @@ on:
     branches:
       - main
 
+permissions:
+  id-token: write
+  contents: read
+
 jobs:
   build-scan-sign-push-deploy:
     runs-on: ubuntu-latest
+
+    env:
+      AWS_REGION: ${{ secrets.AWS_REGION }}
+      ECR_REPOSITORY: ${{ secrets.ECR_REPOSITORY }}
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4.2.0
 
+      # Configure AWS credentials
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -20,10 +29,12 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ secrets.AWS_REGION }}
 
+      # Login to ECR
       - name: Login to Amazon ECR
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
 
+      # Docker builder
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3.7.1
 
@@ -31,7 +42,7 @@ jobs:
       - name: Build Docker image
         run: docker build -t secure-fastapi .
 
-      # Vulnerability scan
+      # Run vulnerability scan
       - name: Run Trivy vulnerability scanner
         uses: aquasecurity/trivy-action@0.20.0
         with:
@@ -51,23 +62,24 @@ jobs:
           --output sbom.json \
           secure-fastapi
 
+      # Upload SBOM
       - name: Upload SBOM artifact
         uses: actions/upload-artifact@v4
         with:
           name: container-sbom
           path: sbom.json
 
-      # Tag image
+      # Tag Docker image
       - name: Tag Docker image
         run: |
-          IMAGE_URI=${{ steps.login-ecr.outputs.registry }}/${{ secrets.ECR_REPOSITORY }}
+          IMAGE_URI=${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}
           docker tag secure-fastapi:latest $IMAGE_URI:latest
           docker tag secure-fastapi:latest $IMAGE_URI:${{ github.sha }}
 
-      # Push image
-      - name: Push Docker image to ECR
+      # Push image to ECR
+      - name: Push Docker image
         run: |
-          IMAGE_URI=${{ steps.login-ecr.outputs.registry }}/${{ secrets.ECR_REPOSITORY }}
+          IMAGE_URI=${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}
           docker push $IMAGE_URI:latest
           docker push $IMAGE_URI:${{ github.sha }}
 
@@ -75,22 +87,29 @@ jobs:
       - name: Install Cosign
         uses: sigstore/cosign-installer@v3
 
-      # Sign container image
+      # Sign container image using keyless OIDC
       - name: Sign container image
+        env:
+          COSIGN_EXPERIMENTAL: "true"
         run: |
-          IMAGE_URI=${{ steps.login-ecr.outputs.registry }}/${{ secrets.ECR_REPOSITORY }}
+          IMAGE_URI=${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}
           cosign sign --yes $IMAGE_URI:${{ github.sha }}
 
-      # Update kubeconfig
+      # Configure kubectl for EKS
       - name: Update kubeconfig
         run: |
           aws eks update-kubeconfig \
-          --region ${{ secrets.AWS_REGION }} \
+          --region $AWS_REGION \
           --name ${{ secrets.EKS_CLUSTER_NAME }}
 
       # Deploy new image using SHA tag
       - name: Deploy to EKS
         run: |
-          IMAGE_URI=${{ steps.login-ecr.outputs.registry }}/${{ secrets.ECR_REPOSITORY }}
+          IMAGE_URI=${{ steps.login-ecr.outputs.registry }}/${{ env.ECR_REPOSITORY }}
           kubectl set image deployment secure-fastapi \
           secure-fastapi=$IMAGE_URI:${{ github.sha }}
+
+      # Verify rollout
+      - name: Verify deployment rollout
+        run: |
+          kubectl rollout status deployment secure-fastapi

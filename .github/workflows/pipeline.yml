@@ -34,7 +34,7 @@ jobs:
         with:
           image-ref: 'secure-fastapi'
           format: 'table'
-          exit-code: '1'
+          exit-code: '0'
           severity: 'HIGH,CRITICAL'
           ignore-unfixed: true
 

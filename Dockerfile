@@ -3,17 +3,32 @@ FROM python:3.11-slim
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 
-RUN addgroup --system appgroup && adduser --system appuser --ingroup appgroup
+# Update OS packages to patch security vulnerabilities
+RUN apt-get update \
+ && apt-get upgrade -y \
+ && rm -rf /var/lib/apt/lists/*
+
+# Create non-root user
+RUN addgroup --system appgroup \
+ && adduser --system --ingroup appgroup appuser
 
 WORKDIR /app
 
+# Copy dependency file
 COPY requirements.txt .
 
-RUN pip install --no-cache-dir -r requirements.txt \
- && pip install --upgrade pip wheel jaraco.context
+# Install Python dependencies
+RUN pip install --no-cache-dir --upgrade pip \
+ && pip install --no-cache-dir -r requirements.txt \
+ && pip install --upgrade wheel jaraco.context
 
+# Copy application code
 COPY app/ .
 
+# Set proper permissions
+RUN chown -R appuser:appgroup /app
+
+# Switch to non-root user
 USER appuser
 
 EXPOSE 80

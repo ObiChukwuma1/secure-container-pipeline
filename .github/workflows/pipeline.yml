@@ -6,7 +6,7 @@ on:
       - main
 
 jobs:
-  build-scan-push-deploy:
+  build-scan-sign-push-deploy:
     runs-on: ubuntu-latest
 
     steps:
@@ -27,10 +27,11 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3.7.1
 
+      # Build image
       - name: Build Docker image
-        run: |
-          docker build -t secure-fastapi .
+        run: docker build -t secure-fastapi .
 
+      # Vulnerability scan
       - name: Run Trivy vulnerability scanner
         uses: aquasecurity/trivy-action@0.20.0
         with:
@@ -40,26 +41,56 @@ jobs:
           severity: 'HIGH,CRITICAL'
           ignore-unfixed: true
 
+      # Generate SBOM
+      - name: Generate SBOM
+        run: |
+          docker run --rm \
+          -v /var/run/docker.sock:/var/run/docker.sock \
+          aquasec/trivy:latest image \
+          --format cyclonedx \
+          --output sbom.json \
+          secure-fastapi
+
+      - name: Upload SBOM artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: container-sbom
+          path: sbom.json
+
+      # Tag image
       - name: Tag Docker image
         run: |
           IMAGE_URI=${{ steps.login-ecr.outputs.registry }}/${{ secrets.ECR_REPOSITORY }}
           docker tag secure-fastapi:latest $IMAGE_URI:latest
           docker tag secure-fastapi:latest $IMAGE_URI:${{ github.sha }}
 
+      # Push image
       - name: Push Docker image to ECR
         run: |
           IMAGE_URI=${{ steps.login-ecr.outputs.registry }}/${{ secrets.ECR_REPOSITORY }}
           docker push $IMAGE_URI:latest
           docker push $IMAGE_URI:${{ github.sha }}
 
+      # Install Cosign
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@v3
+
+      # Sign container image
+      - name: Sign container image
+        run: |
+          IMAGE_URI=${{ steps.login-ecr.outputs.registry }}/${{ secrets.ECR_REPOSITORY }}
+          cosign sign --yes $IMAGE_URI:${{ github.sha }}
+
+      # Update kubeconfig
       - name: Update kubeconfig
         run: |
           aws eks update-kubeconfig \
           --region ${{ secrets.AWS_REGION }} \
           --name ${{ secrets.EKS_CLUSTER_NAME }}
 
+      # Deploy new image using SHA tag
       - name: Deploy to EKS
         run: |
-          kubectl apply -f deployment.yaml
-          kubectl apply -f service.yaml
-          kubectl rollout restart deployment secure-fastapi
+          IMAGE_URI=${{ steps.login-ecr.outputs.registry }}/${{ secrets.ECR_REPOSITORY }}
+          kubectl set image deployment secure-fastapi \
+          secure-fastapi=$IMAGE_URI:${{ github.sha }}

@@ -29,6 +29,8 @@ spec:
           securityContext:
             runAsNonRoot: true
             runAsUser: 1000
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
 
           resources:
             requests:
@@ -38,3 +40,17 @@ spec:
             limits:
               cpu: "500m"
               memory: "256Mi"
+
+          livenessProbe:
+            httpGet:
+              path: /
+              port: 80
+            initialDelaySeconds: 10
+            periodSeconds: 15
+
+          readinessProbe:
+            httpGet:
+              path: /
+              port: 80
+            initialDelaySeconds: 5
+            periodSeconds: 10
